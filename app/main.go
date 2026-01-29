@@ -45,11 +45,19 @@ func handleThisClient(conn net.Conn) {
 
 		// Check how many PING commands are in the data
 		data := string(buf[:n])
-		pingCount := strings.Count(data, "*1\r\n$4\r\nPING")
+		parts := strings.Split(data, "\r\n")
 
-		// Send PONG response for each PING command
-		for i := 0; i < pingCount; i++ {
-			conn.Write([]byte("+PONG\r\n"))
+		if len(parts) >= 3 {
+			command := strings.ToUpper(parts[2])
+
+			if command == "PING" {
+				conn.Write([]byte("+Pong\r\n"))
+			} else if command == "ECHO" {
+				argument := parts[4]
+				length := len(argument)
+				response := fmt.Sprintf("$%d\r\n%s\r\n", length, argument)
+				conn.Write([]byte(response))
+			}
 		}
 	}
 }
