@@ -81,7 +81,11 @@ func handleThisClient(conn net.Conn, store map[string]string) {
 			conn.Write([]byte("+OK\r\n"))
 		} else if command == "GET" {
 			key := parts[1]
-			value := store[key]
+			value, exists := store[key]
+			if !exists {
+				conn.Write([]byte("$-1\r\n"))
+				continue
+			}
 			length := len(value)
 			response := fmt.Sprintf("$%d\r\n%s\r\n", length, value)
 			conn.Write([]byte(response))
