@@ -51,7 +51,7 @@ func handleThisClient(conn net.Conn) {
 			command := strings.ToUpper(parts[2])
 
 			if command == "PING" {
-				conn.Write([]byte("+Pong\r\n"))
+				conn.Write([]byte("+PONG\r\n"))
 			} else if command == "ECHO" {
 				argument := parts[4]
 				length := len(argument)
