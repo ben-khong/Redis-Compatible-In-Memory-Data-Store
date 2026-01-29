@@ -58,6 +58,8 @@ func handleThisClient(conn net.Conn) {
 		}
 
 		command := strings.ToUpper(parts[0])
+		// Create map to set a key to a value
+		m := make(map[string]string)
 
 		if command == "PING" {
 			conn.Write([]byte("+PONG\r\n"))
@@ -69,6 +71,17 @@ func handleThisClient(conn net.Conn) {
 			argument := parts[1]
 			length := len(argument)
 			response := fmt.Sprintf("$%d\r\n%s\r\n", length, argument)
+			conn.Write([]byte(response))
+		} else if command == "SET" {
+			key := parts[1]
+			value := parts[2]
+			m[key] = value
+			conn.Write([]byte("+OK\r\n"))
+		} else if command == "GET" {
+			key := parts[1]
+			value := m[key]
+			length := len(value)
+			response := fmt.Sprintf("$%d\r\n%s\r\n", length, value)
 			conn.Write([]byte(response))
 		}
 
