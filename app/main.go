@@ -6,25 +6,24 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
-var _ = net.Listen
-var _ = os.Exit
+type Value struct {
+	data      string
+	expiresAt time.Time
+}
 
 func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Println("Logs from your program will appear here!")
 
-	// Uncomment the code below to pass the first stage
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
 
-	// Create map to set a key to a value
-	store := make(map[string]string)
+	store := make(map[string]Value)
 
 	for {
 		conn, err := l.Accept()
@@ -37,7 +36,7 @@ func main() {
 	}
 }
 
-func handleThisClient(conn net.Conn, store map[string]string) {
+func handleThisClient(conn net.Conn, store map[string]Value) {
 	defer conn.Close()
 	buf := make([]byte, 1024)
 
@@ -48,15 +47,12 @@ func handleThisClient(conn net.Conn, store map[string]string) {
 		}
 
 		data := string(buf[:n])
-
-		// Parse the RESP data
 		parts, err := parseRESP(data)
 		if err != nil {
 			fmt.Println("Error parsing RESP:", err)
 			continue
 		}
 
-		// Now parts[0] is the command, parts[1], parts[2]... are arguments
 		if len(parts) == 0 {
 			continue
 		}
@@ -76,21 +72,50 @@ func handleThisClient(conn net.Conn, store map[string]string) {
 			conn.Write([]byte(response))
 		} else if command == "SET" {
 			key := parts[1]
-			value := parts[2]
-			store[key] = value
+			val := parts[2]
+
+			var expiryTime time.Time
+
+			if len(parts) >= 5 {
+				expiryType := strings.ToUpper(parts[3])
+
+				if expiryType == "PX" {
+					milliseconds, err := strconv.Atoi(parts[4])
+					if err == nil {
+						expiryTime = time.Now().Add(time.Duration(milliseconds) * time.Millisecond)
+					}
+				} else if expiryType == "EX" {
+					seconds, err := strconv.Atoi(parts[4])
+					if err == nil {
+						expiryTime = time.Now().Add(time.Duration(seconds) * time.Second)
+					}
+				}
+			}
+
+			store[key] = Value{
+				data:      val,
+				expiresAt: expiryTime,
+			}
 			conn.Write([]byte("+OK\r\n"))
 		} else if command == "GET" {
 			key := parts[1]
-			value, exists := store[key]
+			val, exists := store[key]
+
 			if !exists {
 				conn.Write([]byte("$-1\r\n"))
 				continue
 			}
-			length := len(value)
-			response := fmt.Sprintf("$%d\r\n%s\r\n", length, value)
+
+			if !val.expiresAt.IsZero() && time.Now().After(val.expiresAt) {
+				delete(store, key)
+				conn.Write([]byte("$-1\r\n"))
+				continue
+			}
+
+			length := len(val.data)
+			response := fmt.Sprintf("$%d\r\n%s\r\n", length, val.data)
 			conn.Write([]byte(response))
 		}
-
 	}
 }
 
@@ -99,35 +124,27 @@ func parseRESP(data string) ([]string, error) {
 		return nil, fmt.Errorf("empty data")
 	}
 
-	// Check if it's an array
 	if data[0] != '*' {
 		return nil, fmt.Errorf("expected array, got: %c", data[0])
 	}
 
-	// Split by \r\n to get parts
 	parts := strings.Split(data, "\r\n")
-
-	// Parse array length from first element (e.g., "*2" -> 2)
-	arrayLengthStr := parts[0][1:] // Skip the '*'
+	arrayLengthStr := parts[0][1:]
 	arrayLength, err := strconv.Atoi(arrayLengthStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid array length: %s", &arrayLengthStr)
+		return nil, fmt.Errorf("invalid array length: %s", arrayLengthStr)
 	}
 
-	// Extract the actual strings from the array
 	result := make([]string, 0, arrayLength)
-	idx := 1 // Start after "*2"
+	idx := 1
 
 	for i := 0; i < arrayLength; i++ {
-		// Each element has format: $<length>\r\n<string>
 		if idx >= len(parts) {
 			return nil, fmt.Errorf("unexpected end of data")
 		}
 
-		// Skip the length indicator (e.g., "$4")
 		idx++
 
-		// Get the actual string
 		if idx >= len(parts) {
 			return nil, fmt.Errorf("unexpected end of data")
 		}
@@ -136,5 +153,4 @@ func parseRESP(data string) ([]string, error) {
 	}
 
 	return result, nil
-
 }
