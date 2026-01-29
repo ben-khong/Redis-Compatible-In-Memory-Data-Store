@@ -17,23 +17,27 @@ func main() {
 	fmt.Println("Logs from your program will appear here!")
 
 	// Uncomment the code below to pass the first stage
-
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
+
+	// Create map to set a key to a value
+	store := make(map[string]string)
+
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		go handleThisClient(conn)
+
+		go handleThisClient(conn, store)
 	}
 }
 
-func handleThisClient(conn net.Conn) {
+func handleThisClient(conn net.Conn, store map[string]string) {
 	defer conn.Close()
 	buf := make([]byte, 1024)
 
@@ -58,8 +62,6 @@ func handleThisClient(conn net.Conn) {
 		}
 
 		command := strings.ToUpper(parts[0])
-		// Create map to set a key to a value
-		m := make(map[string]string)
 
 		if command == "PING" {
 			conn.Write([]byte("+PONG\r\n"))
@@ -75,11 +77,11 @@ func handleThisClient(conn net.Conn) {
 		} else if command == "SET" {
 			key := parts[1]
 			value := parts[2]
-			m[key] = value
+			store[key] = value
 			conn.Write([]byte("+OK\r\n"))
 		} else if command == "GET" {
 			key := parts[1]
-			value := m[key]
+			value := store[key]
 			length := len(value)
 			response := fmt.Sprintf("$%d\r\n%s\r\n", length, value)
 			conn.Write([]byte(response))
