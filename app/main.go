@@ -28,7 +28,7 @@ func main() {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
+			fmt.Println("Error accepting connection:", err.Error())
 			os.Exit(1)
 		}
 
@@ -59,64 +59,98 @@ func handleThisClient(conn net.Conn, store map[string]Value) {
 
 		command := strings.ToUpper(parts[0])
 
-		if command == "PING" {
-			conn.Write([]byte("+PONG\r\n"))
-		} else if command == "ECHO" {
-			if len(parts) < 2 {
-				conn.Write([]byte("-ERR wrong number of arguments\r\n"))
-				continue
-			}
-			argument := parts[1]
-			length := len(argument)
-			response := fmt.Sprintf("$%d\r\n%s\r\n", length, argument)
-			conn.Write([]byte(response))
-		} else if command == "SET" {
-			key := parts[1]
-			val := parts[2]
-
-			var expiryTime time.Time
-
-			if len(parts) >= 5 {
-				expiryType := strings.ToUpper(parts[3])
-
-				if expiryType == "PX" {
-					milliseconds, err := strconv.Atoi(parts[4])
-					if err == nil {
-						expiryTime = time.Now().Add(time.Duration(milliseconds) * time.Millisecond)
-					}
-				} else if expiryType == "EX" {
-					seconds, err := strconv.Atoi(parts[4])
-					if err == nil {
-						expiryTime = time.Now().Add(time.Duration(seconds) * time.Second)
-					}
-				}
-			}
-
-			store[key] = Value{
-				data:      val,
-				expiresAt: expiryTime,
-			}
-			conn.Write([]byte("+OK\r\n"))
-		} else if command == "GET" {
-			key := parts[1]
-			val, exists := store[key]
-
-			if !exists {
-				conn.Write([]byte("$-1\r\n"))
-				continue
-			}
-
-			if !val.expiresAt.IsZero() && time.Now().After(val.expiresAt) {
-				delete(store, key)
-				conn.Write([]byte("$-1\r\n"))
-				continue
-			}
-
-			length := len(val.data)
-			response := fmt.Sprintf("$%d\r\n%s\r\n", length, val.data)
-			conn.Write([]byte(response))
+		switch command {
+		case "PING":
+			handlePing(conn)
+		case "ECHO":
+			handleEcho(conn, parts)
+		case "SET":
+			handleSet(conn, store, parts)
+		case "GET":
+			handleGet(conn, store, parts)
 		}
 	}
+}
+
+func handlePing(conn net.Conn) {
+	conn.Write([]byte("+PONG\r\n"))
+}
+
+func handleEcho(conn net.Conn, parts []string) {
+	if len(parts) < 2 {
+		conn.Write([]byte("-ERR wrong number of arguments\r\n"))
+		return
+	}
+	argument := parts[1]
+	response := fmt.Sprintf("$%d\r\n%s\r\n", len(argument), argument)
+	conn.Write([]byte(response))
+}
+
+func handleSet(conn net.Conn, store map[string]Value, parts []string) {
+	if len(parts) < 3 {
+		conn.Write([]byte("-ERR wrong number of arguments\r\n"))
+		return
+	}
+
+	key := parts[1]
+	val := parts[2]
+	expiryTime := parseExpiry(parts)
+
+	store[key] = Value{
+		data:      val,
+		expiresAt: expiryTime,
+	}
+
+	conn.Write([]byte("+OK\r\n"))
+}
+
+func handleGet(conn net.Conn, store map[string]Value, parts []string) {
+	if len(parts) < 2 {
+		conn.Write([]byte("-ERR wrong number of arguments\r\n"))
+		return
+	}
+
+	key := parts[1]
+	val, exists := store[key]
+
+	if !exists {
+		conn.Write([]byte("$-1\r\n"))
+		return
+	}
+
+	if isExpired(val) {
+		delete(store, key)
+		conn.Write([]byte("$-1\r\n"))
+		return
+	}
+
+	response := fmt.Sprintf("$%d\r\n%s\r\n", len(val.data), val.data)
+	conn.Write([]byte(response))
+}
+
+func parseExpiry(parts []string) time.Time {
+	if len(parts) < 5 {
+		return time.Time{}
+	}
+
+	expiryType := strings.ToUpper(parts[3])
+	expiryValue, err := strconv.Atoi(parts[4])
+	if err != nil {
+		return time.Time{}
+	}
+
+	switch expiryType {
+	case "PX":
+		return time.Now().Add(time.Duration(expiryValue) * time.Millisecond)
+	case "EX":
+		return time.Now().Add(time.Duration(expiryValue) * time.Second)
+	default:
+		return time.Time{}
+	}
+}
+
+func isExpired(val Value) bool {
+	return !val.expiresAt.IsZero() && time.Now().After(val.expiresAt)
 }
 
 func parseRESP(data string) ([]string, error) {
@@ -142,7 +176,6 @@ func parseRESP(data string) ([]string, error) {
 		if idx >= len(parts) {
 			return nil, fmt.Errorf("unexpected end of data")
 		}
-
 		idx++
 
 		if idx >= len(parts) {
